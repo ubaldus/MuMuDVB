@@ -3,7 +3,7 @@
  *
  * (C) 2004-2011 Brice DUBOST <mumudvb@braice.net>
  *
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  *
  * Copyright notice:
  *
@@ -196,6 +196,30 @@ int get_ts_packet(unsigned char *buf, mumudvb_ts_packet_t *pkt)
 	return packet_avail;
 }
 
+/** @brief This function will log the start of a partial section
+ * This assumes that at least the table header (8 bytes) is present
+ */
+void log_ts_packet_start(mumudvb_ts_packet_t *pkt)
+{
+	tbl_h_t *tbl_struct=(tbl_h_t *)pkt->data_partial;
+	log_message(log_module, MSG_FLOOD, "First bytes\t 0x%02x 0x%02x 0x%02x 0x%02x  0x%02x 0x%02x 0x%02x 0x%02x\n",
+			pkt->data_partial[0],
+			pkt->data_partial[1],
+			pkt->data_partial[2],
+			pkt->data_partial[3],
+			pkt->data_partial[4],
+			pkt->data_partial[5],
+			pkt->data_partial[6],
+			pkt->data_partial[7]);
+	log_message(log_module, MSG_FLOOD, "Struct data\t table_id 0x%02x section_syntax_indicator 0x%02x section_length 0x%02x transport_stream_id 0x%02x version_number 0x%02x current_next_indicator 0x%02x last_section_number 0x%02x\n",
+			tbl_struct->table_id,
+			tbl_struct->section_syntax_indicator,
+			HILO(tbl_struct->section_length),
+			HILO(tbl_struct->transport_stream_id),
+			tbl_struct->version_number,
+			tbl_struct->current_next_indicator,
+			tbl_struct->last_section_number);
+}
 
 
 /** @brief This function will add data to the current partial section
@@ -226,49 +250,50 @@ void add_ts_packet_data(unsigned char *buf, mumudvb_ts_packet_t *pkt, int data_l
 		if(pkt->status_partial!=EMPTY)
 			log_message(log_module, MSG_FLOOD, "Unfinished packet and beginning of a new one, we drop the started one len: %d\n", pkt->len_partial);
 		//We copy the data to the partial packet
-		pkt->status_partial=STARTED;
 		pkt->cc=cc;
 		pkt->pid=pid;
-		tbl_h_t *tbl_struct=(tbl_h_t *)buf;
-		pkt->expected_len_partial=HILO(tbl_struct->section_length)+BYTES_BFR_SEC_LEN;
-		//we copy the amount of data needed
-		if(pkt->expected_len_partial<data_left)
-			copy_len=pkt->expected_len_partial;
+		if(data_left<3)
+		{
+			pkt->status_partial=PARTIAL_HEADER;
+			memcpy(pkt->data_partial,buf,data_left);
+			pkt->len_partial=data_left;
+			pkt->expected_len_partial=0;
+			log_message(log_module, MSG_FLOOD, "Starting a packet with partial length header, PID %d cc %d len %d\n",
+					pkt->pid,
+					pkt->cc,
+					pkt->len_partial);
+			data_left=0;
+			copy_len=0;
+		}
 		else
-			copy_len=data_left;
-		pkt->len_partial=copy_len;
-		//The real copy
-		memcpy(pkt->data_partial,buf,pkt->len_partial);
-		//we update the amount of data left
-		data_left-=copy_len;
-		//lot of debugging information
-		log_message(log_module, MSG_FLOOD, "Starting a packet PID %d cc %d len %d expected len %d\n",
-				pkt->pid,
-				pkt->cc,
-				pkt->len_partial,
-				pkt->expected_len_partial);
-		log_message(log_module, MSG_FLOOD, "First bytes\t 0x%02x 0x%02x 0x%02x 0x%02x  0x%02x 0x%02x 0x%02x 0x%02x\n",
-				pkt->data_partial[0],
-				pkt->data_partial[1],
-				pkt->data_partial[2],
-				pkt->data_partial[3],
-				pkt->data_partial[4],
-				pkt->data_partial[5],
-				pkt->data_partial[6],
-				pkt->data_partial[7]);
-		log_message(log_module, MSG_FLOOD, "Struct data\t table_id 0x%02x section_syntax_indicator 0x%02x section_length 0x%02x transport_stream_id 0x%02x version_number 0x%02x current_next_indicator 0x%02x last_section_number 0x%02x\n",
-				tbl_struct->table_id,
-				tbl_struct->section_syntax_indicator,
-				HILO(tbl_struct->section_length),
-				HILO(tbl_struct->transport_stream_id),
-				tbl_struct->version_number,
-				tbl_struct->current_next_indicator,
-				tbl_struct->last_section_number);
+		{
+			pkt->status_partial=STARTED;
+			tbl_h_t *tbl_struct=(tbl_h_t *)buf;
+			pkt->expected_len_partial=HILO(tbl_struct->section_length)+BYTES_BFR_SEC_LEN;
+			//we copy the amount of data needed
+			if(pkt->expected_len_partial<data_left)
+				copy_len=pkt->expected_len_partial;
+			else
+				copy_len=data_left;
+			pkt->len_partial=copy_len;
+			//The real copy
+			memcpy(pkt->data_partial,buf,pkt->len_partial);
+			//we update the amount of data left
+			data_left-=copy_len;
+			//lot of debugging information
+			log_message(log_module, MSG_FLOOD, "Starting a packet PID %d cc %d len %d expected len %d\n",
+					pkt->pid,
+					pkt->cc,
+					pkt->len_partial,
+					pkt->expected_len_partial);
+			if(pkt->len_partial>=8)
+				log_ts_packet_start(pkt);
+		}
 	}
 	else
 	{
 		log_message(log_module, MSG_FLOOD, "Continuing packet, data left %d\n",data_left);
-		if(pkt->status_partial!=STARTED)
+		if(pkt->status_partial!=STARTED && pkt->status_partial!=PARTIAL_HEADER)
 		{
 			log_message(log_module, MSG_FLOOD, "Continuing packet and saved packet not started or full, can be a continuity error\n");
 			pkt->status_partial=EMPTY;
@@ -293,6 +318,27 @@ void add_ts_packet_data(unsigned char *buf, mumudvb_ts_packet_t *pkt, int data_l
 		}
 		else
 		{
+			if(pkt->status_partial==PARTIAL_HEADER)
+			{
+				if(pkt->len_partial>=3)
+				{
+					log_message(log_module, MSG_FLOOD, "Partial length field %d is not valid in PARTIAL_HEADER state, PID %d\n", pkt->len_partial, pkt->pid);
+					pkt->status_partial=EMPTY;
+					return;
+				}
+				else if(3-pkt->len_partial>data_left)
+				{
+					log_message(log_module, MSG_FLOOD, "Packet length header could not be accumulated after two TS packets, PID %d\n", pkt->pid);
+					pkt->status_partial=EMPTY;
+					return;
+				}
+				//read up to the first 3 bytes, to get the packet length
+				memcpy(pkt->data_partial+pkt->len_partial,buf,3-pkt->len_partial);
+				tbl_h_t *tbl_struct=(tbl_h_t *)pkt->data_partial;
+				pkt->expected_len_partial=HILO(tbl_struct->section_length)+BYTES_BFR_SEC_LEN;
+				pkt->status_partial=STARTED;
+			}
+
 			//packet started and continuing packet, we append the data
 			//we copy the minimum amount of data
 			if((pkt->len_partial+data_left)> pkt->expected_len_partial)
@@ -312,25 +358,33 @@ void add_ts_packet_data(unsigned char *buf, mumudvb_ts_packet_t *pkt, int data_l
 			data_left=0;
 
 			memcpy(pkt->data_partial+pkt->len_partial,buf,copy_len);//we add the packet to the buffer
+			int prev_len_partial=pkt->len_partial;
 			pkt->len_partial+=copy_len;
 			pkt->cc=cc; //update cc
+
+			//Log packet start if it has just become at least 8 bytes
+			if(prev_len_partial<8 && pkt->len_partial>=8)
+				log_ts_packet_start(pkt);
 			log_message(log_module, MSG_FLOOD, "Continuing a packet PID %d cc %d len %d expected %d\n",pkt->pid,pkt->cc,pkt->len_partial,pkt->expected_len_partial);
 		}
 	}
 
-	//We check if the packet is full
-	if(ts_partial_full(pkt))
+	if(pkt->status_partial!=PARTIAL_HEADER)
 	{
-		//The partial packet is full, we check the CRC32
-		if(ts_check_crc32(pkt))
-			ts_move_part_to_full(pkt); //Everything is perfect, the packet full is ok
-	}
+		//We check if the packet is full
+		if(ts_partial_full(pkt))
+		{
+			//The partial packet is full, we check the CRC32
+			if(ts_check_crc32(pkt))
+				ts_move_part_to_full(pkt); //Everything is perfect, the packet full is ok
+		}
 
-	//If there is still data, a new section could begin, we call recursively
-	if(data_left)
-	{
-		log_message(log_module, MSG_FLOOD, "Calling recursively, data left %d\n",data_left);
-		add_ts_packet_data(buf+copy_len, pkt, data_left,START_SECTION, pid,cc);
+		//If there is still data, a new section could begin, we call recursively
+		if(data_left)
+		{
+			log_message(log_module, MSG_FLOOD, "Calling recursively, data left %d\n",data_left);
+			add_ts_packet_data(buf+copy_len, pkt, data_left,START_SECTION, pid,cc);
+		}
 	}
 }
 
@@ -346,7 +400,12 @@ void ts_move_part_to_full(mumudvb_ts_packet_t *pkt)
 	}
 	if((pkt->full_buffer_len+pkt->len_partial)>=FULL_BUFFER_SIZE)
 	{
-		log_message(log_module, MSG_WARN, "Too much data, in full packets (%d), we skip one size %d",pkt->full_buffer_len,pkt->len_partial);
+		log_message(log_module, MSG_WARN, "Too much data, in full packets (%d), dropping TS buffers",pkt->full_buffer_len);
+		/* unrecoverable error, restart TS processing */
+		pkt->full_buffer_len=0;
+		pkt->full_number=0;
+		pkt->len_partial=0;
+		pkt->status_partial=EMPTY;
 		return;
 	}
 	memcpy(pkt->buffer_full+pkt->full_buffer_len,pkt->data_partial,pkt->len_partial);
@@ -540,7 +599,7 @@ int check_pmt_service_id(mumudvb_ts_packet_t *pmt, mumudvb_channel_t *channel)
 		return 0;
 	}
 	else if(channel->service_id)
-		log_message( log_module,  MSG_DETAIL,"GOOD service_id for PMT %d and channel \"%s\"\n", pmt->pid, channel->name);
+		log_message( log_module,  MSG_DEBUG,"GOOD service_id for PMT %d and channel \"%s\"\n", pmt->pid, channel->name);
 
 	if(!channel->service_id)
 		log_message( log_module,  MSG_DEBUG,"no service_id information for channel \"%s\"\n", channel->name);
@@ -696,7 +755,8 @@ void ts_display_network_name_descriptor(char* log_module,unsigned char *buf)
 
 	log_message( log_module, MSG_FLOOD, "NIT network name descriptor \n");
 	log_message( log_module, MSG_FLOOD, "NIT network descriptor_len %d\n",descriptor_len);
-	dest=malloc(sizeof(char)*(descriptor_len+1));
+	dest=malloc(sizeof(char)*(descriptor_len+1)); //TODO: take some margin for conversions that would increase number of characters ?
+	//FIXME: Check DEST value
 	memcpy (dest, buf, descriptor_len);
 	dest[descriptor_len] = '\0';
 	convert_en300468_string(dest,descriptor_len,0);

@@ -4,7 +4,7 @@
  * 
  * (C) 2014 Brice DUBOST
  * 
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  * 
  * Copyright notice:
  * 
@@ -243,7 +243,10 @@ void chan_update_CAM(mumu_chan_p_t *chan_p, auto_p_t *auto_p,  void *scam_vars_v
 				}
 				memset (chan_p->channels[ichan].scam_pmt_packet, 0, sizeof( mumudvb_ts_packet_t));//we clear it
 				pthread_mutex_init(&chan_p->channels[ichan].scam_pmt_packet->packetmutex, NULL);
-			}
+			} 
+			// need to send the new PMT to Oscam
+			else if(chan_p->channels[ichan].need_scam_ask==CAM_ASKED)
+				chan_p->channels[ichan].need_scam_ask=CAM_NEED_ASK;
 		}
 
 #endif
@@ -480,14 +483,18 @@ void update_chan_filters(mumu_chan_p_t *chan_p, char *card_base_path, int tuner,
 			}
 	}
 
+	// T2-MI source pid may not belong to any streamed pid, force it.
+	if (chan_p->t2mi_pid > 0) {
+	    asked_pid[chan_p->t2mi_pid]=PID_ASKED;
+	}
 
 	//Now we compare with the ones for the channels
 	for (int ipid = MAX_MANDATORY_PID_NUMBER; ipid < 8193; ipid++)
 	{
 		//Now we have the PIDs we look for those who disappeared
-		if(chan_p->asked_pid[ipid]==PID_ASKED && asked_pid[ipid]!=PID_ASKED)
+		if(chan_p->asked_pid[ipid]==PID_ASKED && asked_pid[ipid]!=PID_ASKED && ipid != PSIP_PID)
 		{
-			log_message( log_module,  MSG_DEBUG, "Update : PID %d does not belong to any channel anymore, we close the filter",
+			log_message( log_module,  MSG_INFO, "Update : PID %d does not belong to any channel anymore, we close the filter",
 					ipid);
 			close(fds->fd_demuxer[ipid]);
 			fds->fd_demuxer[ipid]=0;

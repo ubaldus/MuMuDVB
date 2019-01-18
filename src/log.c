@@ -4,7 +4,7 @@
  * 
  * (C) 2004-2013 Brice DUBOST
  * 
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  * 
  * Copyright notice:
  * 
@@ -511,7 +511,7 @@ gen_file_streamed_channels (char *file_streamed_channels_filename, char *file_no
 		//We store the old to be sure that we store only channels over the minimum packets limit
 		if (channels[curr_channel].has_traffic && (channels[curr_channel].channel_ready>=READY))
 		{
-			fprintf (file_streamed_channels, "%s:%d:%s", channels[curr_channel].ip4Out, channels[curr_channel].portOut, channels[curr_channel].name);
+			fprintf (file_streamed_channels, "%s:%d:%s:%d", channels[curr_channel].ip4Out, channels[curr_channel].portOut, channels[curr_channel].name, channels[curr_channel].service_type);
 			if (channels[curr_channel].scrambled_channel == FULLY_UNSCRAMBLED)
 				fprintf (file_streamed_channels, ":FullyUnscrambled\n");
 			else if (channels[curr_channel].scrambled_channel == PARTIALLY_UNSCRAMBLED)
@@ -520,7 +520,7 @@ gen_file_streamed_channels (char *file_streamed_channels_filename, char *file_no
 				fprintf (file_streamed_channels, ":HighlyScrambled\n");
 		}
 		else
-			fprintf (file_not_streamed_channels, "%s:%d:%s\n", channels[curr_channel].ip4Out, channels[curr_channel].portOut, channels[curr_channel].name);
+			fprintf (file_not_streamed_channels, "%s:%d:%s:%d\n", channels[curr_channel].ip4Out, channels[curr_channel].portOut, channels[curr_channel].name, channels[curr_channel].service_type);
 	fclose (file_streamed_channels);
 	fclose (file_not_streamed_channels);
 
@@ -824,6 +824,10 @@ char *pid_type_to_str(int type)
 		return "Teletext";
 	case PID_EXTRA_SUBTITLE:
 		return "Subtitling";
+	case PID_ECM:
+		return "CA information (ECM)";
+	case PID_EMM:
+		return "CA information (EMM)";
 	case PID_UNKNOW:
 	default:
 		return "Unknown";
@@ -954,9 +958,13 @@ void print_info ()
 			"---------\n"
 			"Originally based on dvbstream 0.6 by (C) Dave Chapman 2001-2004\n"
 			"Released under the GPL.\n"
-			"Latest version available from http://mumudvb.braice.net/\n"
+			"Latest version available from http://mumudvb.net/\n"
 			"Project from the cr@ns (http://www.crans.org)\n"
-			"by Brice DUBOST (mumudvb@braice.net)\n\n", DVB_API_VERSION,DVB_API_VERSION_MINOR);
+			"by Brice DUBOST (mumudvb@braice.net)\n\n"
+#if DVB_API_VERSION >= 5
+			,DVB_API_VERSION,DVB_API_VERSION_MINOR
+#endif			
+			);
 
 }
 
@@ -1034,33 +1042,80 @@ int convert_en300468_string(char *string, int max_len, int debug)
 {
 
 	int encoding_control_char=8; //cf encodings_en300468
-	char *dest;
 	char *tempdest, *tempbuf;
+	char *dest;
+	unsigned char *realstart;
 	unsigned char *src;
 	/* remove control characters and convert to UTF-8 the channel name */
 	//If no channel encoding is specified, it seems that most of the broadcasters
 	//uses ISO/IEC 8859-9. But the norm (EN 300 468) said that it should be Latin-1 (ISO/IEC 6937 + euro)
 
-        //temporary buffers allocation                                                                                                                                   
-        int lenstring=0;
-        //We count the len needed for the temporary buffer.
-	//Due to the special structure of an EN300468 string a \0 can be present in the string
-	//So we cannot use strlen                                                                                 
-        for (src = (unsigned char *) string; *src; src++)
-        {
-                if (*src >= 0x20 && (*src < 0x80 || *src > 0x9f))
-                        //One character                                                                                                                                  
-                        lenstring++;
-                else if(*src==0x10)
-                  { //Encoding ISO/IEC 8859                                                                                                                       
-                    src++;//we skip the current byte                                                                                                                     
-                    src++;//This one is always set to 0                                                                                                                  
-                  }
-        }
 
 
-        tempdest=tempbuf=malloc(sizeof(char)*lenstring+1);
+	//log_message( log_module, MSG_FLOOD, "convert_en300468_string: String to be converted start 0x%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x ",string[0],string[1],string[2],string[3],string[4],string[5],string[6],string[7],string[8],string[9]);
 
+
+	realstart = (unsigned char *)string;
+
+	if(string[0] == '\0')
+	{
+		log_message( log_module, MSG_FLOOD, "Empty string, I leave");
+		return 0;
+	}
+
+
+	if(*realstart < 0x20)
+	{
+		log_message( log_module, MSG_FLOOD, "starting with encoding character 0x%02x",*realstart);
+		if(debug) {log_message( log_module, MSG_FLOOD, "Encoding number 0x%02x, see EN 300 468 Annex A",*realstart);}
+		//control character recognition based on EN 300 468 v1.9.1 Annex A
+		if(*realstart<=0x0b)
+			{encoding_control_char=(int) *realstart+4-1;}
+		else if(*realstart==0x10)
+		{ //ISO/IEC 8859 : See table A.4
+			realstart++;//we skip the current byte
+			realstart++;//This one is always set to 0
+			if(*realstart >= 0x01 && *realstart <=0x0f)
+				encoding_control_char=(int) *realstart-1;
+		}
+		else if(*realstart==0x11)//ISO/IEC 10646 : Basic Multilingual Plane
+			{encoding_control_char=15;}
+		else if(*realstart==0x12)//KSX1001-2004 : Korean Character Set
+			{if(debug) {log_message( log_module, MSG_WARN, "\t\t Encoding KSX1001-2004 (korean character set) not implemented yet by iconv, we'll use the default encoding for service name\n");}}
+		else if(*realstart==0x13)//GB-2312-1980 : Simplified Chinese Character
+			{encoding_control_char=16;}
+		else if(*realstart==0x14)//Big5 subset of ISO/IEC 10646 : Traditional Chinese
+			{encoding_control_char=17;}
+		else if(*realstart==0x15)//UTF-8 encoding of ISO/IEC 10646 : Basic Multilingual Plane
+			{encoding_control_char=18;}
+		else if(*realstart==0x1f)
+		{
+			realstart++;
+			log_message( log_module, MSG_WARN, "\t\t Encoding 0x1F from TS 101 162 not implemented yet (0x%02x), we'll use the default encoding for service name\n",*realstart);
+		}
+		else
+		{
+			log_message( log_module, MSG_WARN, "\t\t Encoding not implemented yet (0x%02x), we'll use the default encoding for service name\n",*realstart);
+		}
+		//we skip the encoding character
+		realstart++;
+	}
+	//temporary buffers allocation
+	int lenstring=0;
+	//We count the len needed for the temporary buffer.
+	//Due to the special structure of an EN300468 string we have to manage control characters
+	for (src = realstart; *src; src++)
+	{
+			if ((*src < 0x80 || *src > 0x9f))
+					//One character
+					lenstring++;
+			if(*src==0x8a) //Control character \"CR/LF\", we replace by a standard newline
+				lenstring++;
+	}
+
+    tempdest=tempbuf=malloc(sizeof(char)*(lenstring+1));
+
+    log_message( log_module, MSG_DEBUG,"String len %d offset %zd",lenstring, realstart-((unsigned char *)string));
 	if(tempdest==NULL)
 	{
 		log_message( log_module, MSG_ERROR,"Problem with malloc : %s file : %s line %d\n",strerror(errno),__FILE__,__LINE__);
@@ -1069,39 +1124,13 @@ int convert_en300468_string(char *string, int max_len, int debug)
 	}
 
 	int len=0;
-	for (src = (unsigned char *) string; *src; src++)
+	for (src = realstart; *src; src++)
 	{
-		if (*src >= 0x20 && (*src < 0x80 || *src > 0x9f))
+		if ((*src < 0x80 || *src > 0x9f))
 		{
 			//We copy non-control characters
 			*tempdest++ = *src;
 			len++;
-		}
-		else if(*src <= 0x20)
-		{
-			if(debug) {log_message( log_module, MSG_FLOOD, "Encoding number 0x%02x, see EN 300 468 Annex A",*src);}
-			//control character recognition based on EN 300 468 v1.9.1 Annex A
-			if(*src<=0x0b)
-				{encoding_control_char=(int) *src+4-1;}
-			else if(*src==0x10)
-			{ //ISO/IEC 8859 : See table A.4
-				src++;//we skip the current byte
-				src++;//This one is always set to 0
-				if(*src >= 0x01 && *src <=0x0f)
-					encoding_control_char=(int) *src-1;
-			}
-			else if(*src==0x11)//ISO/IEC 10646 : Basic Multilingual Plane
-				{encoding_control_char=15;}
-			else if(*src==0x12)//KSX1001-2004 : Korean Character Set
-				{if(debug) {log_message( log_module, MSG_WARN, "\t\t Encoding KSX1001-2004 (korean character set) not implemented yet by iconv, we'll use the default encoding for service name\n");}}
-			else if(*src==0x13)//GB-2312-1980 : Simplified Chinese Character
-				{encoding_control_char=16;}
-			else if(*src==0x14)//Big5 subset of ISO/IEC 10646 : Traditional Chinese
-				{encoding_control_char=17;}
-			else if(*src==0x15)//UTF-8 encoding of ISO/IEC 10646 : Basic Multilingual Plane
-				{encoding_control_char=18;}
-			else
-				{if(debug) {log_message( log_module, MSG_WARN, "\t\t Encoding not implemented yet (0x%02x), we'll use the default encoding for service name\n",*src);}}
 		}
 		else if (*src >= 0x80 && *src <= 0x9f)
 		{
@@ -1113,13 +1142,20 @@ int convert_en300468_string(char *string, int max_len, int debug)
 			else if(*src==0x87)
 				{if(debug) {log_message( log_module, MSG_DETAIL, "Control character \"UnBold\", we drop");}}
 			else if(*src==0x8a)
-				{if(debug) {log_message( log_module, MSG_DETAIL, "Control character \"CR/LF\", we drop");}}
+			{
+				if(debug) {log_message( log_module, MSG_DETAIL, "Control character \"CR/LF\", we replace by a standard newline");}
+				*tempdest++ = '\n';
+				len++;
+			}
 			else if(*src>=0x8b )
 				{if(debug) {log_message( log_module, MSG_DETAIL, "Control character 0x%02x \"User defined\" at len %d. We drop",*src,len);}}
 			else
 				{if(debug) {log_message( log_module, MSG_DEBUG, "\tUnimplemented name control_character : %x \n", *src);}}
 		}
 	}
+    log_message( log_module, MSG_DEBUG,"String len before conversion %d (DEBUG lenstring is %d )",len,lenstring);
+
+	*tempdest = 0;
 #ifdef HAVE_ICONV
 	//Conversion to utf8
 	iconv_t cd;
@@ -1135,19 +1171,22 @@ int convert_en300468_string(char *string, int max_len, int debug)
 	}
 	size_t inSize, outSize=max_len;
 	inSize=len;
-	//pointers initialisation because iconv change them, we store
+	//pointers initialization because iconv change them, we store
 	dest=string;
 	tempdest=tempbuf;
 	//conversion
-	iconv(cd, &tempdest, &inSize, &dest, &outSize );
+	size_t nonreversible;
+	nonreversible = iconv(cd, &tempdest, &inSize, &dest, &outSize );
 	*dest = '\0';
 	free(tempbuf);
 	iconv_close( cd );
+	log_message( log_module, MSG_FLOOD, "Converted text : \"%s\" (text encoding : %s)\nnonreversible conversions %zd", string,encodings_en300468[encoding_control_char],nonreversible);
 #else
 	if(debug) {log_message( log_module, MSG_DETAIL, "Iconv not present, no name encoding conversion \n");}
 #endif
 exit_iconv:
 	if(debug) {log_message( log_module, MSG_FLOOD, "Converted text : \"%s\" (text encoding : %s)\n", string,encodings_en300468[encoding_control_char]);}
+
 	return encoding_control_char;
 
 }

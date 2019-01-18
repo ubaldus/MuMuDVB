@@ -3,7 +3,7 @@
  *
  * (C) 2013 Brice DUBOST
  *
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  *
  * Copyright notice:
  *
@@ -112,7 +112,7 @@ int unicast_send_channel_list_js (int number_of_channels, mumudvb_channel_t *cha
 		// SCAM information
 #ifdef ENABLE_SCAM_SUPPORT
 		if (scam_vars->scam_support) {
-			unicast_reply_write(reply, "\t\t\"scam\": {\n\t\t\t \"descrambled\": %d,\n",channels[curr_channel].scam_support);
+			unicast_reply_write(reply, "\t\"scam\": {\n\t\t \"descrambled\": %d",channels[curr_channel].scam_support);
 			if (channels[curr_channel].scam_support) {
 				unsigned int ring_buffer_num_packets = 0;
 
@@ -122,12 +122,13 @@ int unicast_send_channel_list_js (int number_of_channels, mumudvb_channel_t *cha
 					pthread_mutex_unlock(&channels[curr_channel].ring_buf->lock);
 				}
 
-				unicast_reply_write(reply, "\t\t\t\"ring_buffer_size\": %u,\n",channels[curr_channel].ring_buffer_size);
-				unicast_reply_write(reply, "\t\t\t\"decsa_delay\": %u,\n",channels[curr_channel].decsa_delay);
-				unicast_reply_write(reply, "\t\t\t\"send_delay\": %u,\n",channels[curr_channel].send_delay);
-				unicast_reply_write(reply, "\t\t\t\"num_packets\": %u\n",ring_buffer_num_packets);
+				unicast_reply_write(reply, ",\n");
+				unicast_reply_write(reply, "\t\t\"ring_buffer_size\": %u,\n",channels[curr_channel].ring_buffer_size);
+				unicast_reply_write(reply, "\t\t\"decsa_delay\": %u,\n",channels[curr_channel].decsa_delay);
+				unicast_reply_write(reply, "\t\t\"send_delay\": %u,\n",channels[curr_channel].send_delay);
+				unicast_reply_write(reply, "\t\t\"num_packets\": %u",ring_buffer_num_packets);
 			}
-			unicast_reply_write(reply, "\t\t},\n");
+			unicast_reply_write(reply, "\n\t},\n");
 		}
 #endif
 		unicast_reply_write(reply, "\t\"pids\":[\n");
@@ -381,7 +382,7 @@ unicast_send_json_state (int number_of_channels, mumudvb_channel_t *channels, in
 	unicast_reply_write(reply, "\t\"frontend_tuned\" : %d ,\n",strengthparams->tune_p->card_tuned);
 	if (strengthparams->tune_p->fe_type==FE_QPSK) // Do some test for always showing frequency in kHz
 	{
-		unicast_reply_write(reply, "\t\"frontend_frequency\" : %d,\n",strengthparams->tune_p->freq);
+		unicast_reply_write(reply, "\t\"frontend_frequency\" : %f,\n",strengthparams->tune_p->freq);
 		unicast_reply_write(reply, "\t\"frontend_satnumber\" : %d,\n",strengthparams->tune_p->sat_number);
 	}
 	else
@@ -393,7 +394,7 @@ unicast_send_json_state (int number_of_channels, mumudvb_channel_t *channels, in
 	unicast_reply_write(reply, "\t\"frontend_symbolrate\" : %d,\n",strengthparams->tune_p->srate);
 
 	// Frontend type
-	char fetype[10]="Unkonwn";
+	char fetype[10]="Unknown";
 	if (strengthparams->tune_p->fe_type==FE_OFDM)
 #ifdef DVBT2
 		if (strengthparams->tune_p->delivery_system==SYS_DVBT2)
@@ -445,9 +446,10 @@ unicast_send_json_state (int number_of_channels, mumudvb_channel_t *channels, in
 	// ****************** AUTOCONF ************************
 	unicast_reply_write(reply, "\"autoconfiguration\":{\n");
 	// Autoconfiguration state
-	unicast_reply_write(reply, "\t\"enabled\" : %d,\n",auto_p->autoconfiguration);
+	unicast_reply_write(reply, "\t\"enabled\" : %d",auto_p->autoconfiguration);
 	if(auto_p->autoconfiguration)
 	{
+	  	unicast_reply_write(reply, ",\n");
 		unicast_reply_write(reply, "\t\"transport_stream_id\" : %d,\n",auto_p->transport_stream_id);
 		unicast_reply_write(reply, "\t\"network_id\" : %d,\n",auto_p->network_id);
 		unicast_reply_write(reply, "\t\"original_network_id\" : %d,\n",auto_p->original_network_id);
@@ -455,11 +457,11 @@ unicast_send_json_state (int number_of_channels, mumudvb_channel_t *channels, in
 		unicast_reply_write(reply, "\t\"sdt_version\" : %d,\n",auto_p->sdt_version);
 		unicast_reply_write(reply, "\t\"nit_version\" : %d,\n",auto_p->nit_version);
 		unicast_reply_write(reply, "\t\"psip_version\" : %d,\n",auto_p->psip_version);
-		unicast_reply_write(reply, "\t\"finished\" : %d\n",
+		unicast_reply_write(reply, "\t\"finished\" : %d",
 				auto_p->pat_all_sections_seen && (auto_p->sdt_all_sections_seen || auto_p->psip_all_sections_seen) && auto_p->nit_all_sections_seen);
 
 	}
-	unicast_reply_write(reply, "},\n");
+	unicast_reply_write(reply, "\n},\n");
 
 
 	// ****************** CAM ************************
@@ -537,7 +539,7 @@ int unicast_send_client_list_xml (unicast_client_t *unicast_client, struct unica
 		unicast_reply_write(reply, "\t\t\t<client number=\"%d\">\n", client);
 		unicast_reply_write(reply, "\t\t\t\t<socket>%d</socket>", unicast_client->Socket);
 		unicast_reply_write(reply, "\t\t\t\t<remote_address><![CDATA[%s]]></remote_address>\n", inet_ntoa(unicast_client->SocketAddr.sin_addr));
-		unicast_reply_write(reply, "\t\t\t\t<remote_port>%d</remote port>", unicast_client->SocketAddr.sin_port);
+		unicast_reply_write(reply, "\t\t\t\t<remote_port>%d</remote_port>", unicast_client->SocketAddr.sin_port);
 		unicast_reply_write(reply, "\t\t\t\t<buffersize>%u</buffersize>\n",unicast_client->buffersize);
 		unicast_reply_write(reply, "\t\t\t\t<consecutive_errors>%d</consecutive_errors>\n", unicast_client->consecutive_errors);
 		unicast_reply_write(reply, "\t\t\t\t<first_error_time>%d</first_error_time>\n", unicast_client->first_error_time);
@@ -701,7 +703,7 @@ unicast_send_xml_state (int number_of_channels, mumudvb_channel_t *channels, int
 	unicast_reply_write(reply, "\t<frontend_symbolrate>%d</frontend_symbolrate>\n",strengthparams->tune_p->srate);
 
 	// Frontend type
-	char fetype[10]="Unkonwn";
+	char fetype[10]="Unknown";
 	if (strengthparams->tune_p->fe_type==FE_OFDM)
 #ifdef DVBT2
 		if (strengthparams->tune_p->delivery_system==SYS_DVBT2)

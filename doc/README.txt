@@ -1,12 +1,12 @@
 MuMuDVB - README
 ================
 Brice Dubost <mumudvb@braice.net>
-Version 2.0.0
+Version 2.1.0
 
 [NOTE]
 An HTML version of this file is availaible on http://www.mumudvb.net[MuMuDVB's website].
 
-image::http://www.mumudvb.net/sites/default/files/logo.png[caption="logo MuMuDVB"]
+image::http://mumudvb.net/logo.png[caption="logo MuMuDVB"]
 
 Presentation
 ------------
@@ -25,7 +25,7 @@ History : MuMuDVB is originally a modification of dvbstream that http://www.cran
 Website
 ~~~~~~~
 
-http://mumudvb.braice.net[MuMuDVB main site]
+http://mumudvb.net/[MuMuDVB main site]
 
 
 Authors and contacts
@@ -38,7 +38,7 @@ Authors and contacts
 - mailto:manu@REMOVEMEcrans.ens-cachan.fr[Manuel Sabban] (getopt)
 - mailto:glondu@REMOVEMEcrans.ens-cachan.fr[Stéphane Glondu] (man page, debian package)
 - Special thanks to Dave Chapman (dvbstream author and contributor)
-- Pierre Gronlier, Sébastien Raillard, Ludovic Boué, Romolo Manfredini, Matthias Šubik, Krzysztof Ostrowski
+- Pierre Gronlier, Sébastien Raillard, Ludovic Boué, Romolo Manfredini, Matthias Šubik, Krzysztof Ostrowski, Frederik Kriewitz
 - Others, please see git logs
 
 
@@ -61,7 +61,7 @@ Features overview
 - Support for automatic configuration i.e channels discovery and follow changes, see <<autoconfiguration,Autoconfiguration>> section
 - Generation of SAP announces, see <<sap,SAP>> section
 - Support of DVB-S2, DVB-S, DVB-C, DVB-T and ATSC
-- Possibility to partially rewrite the stream for better compatibility with set-top boxes and some clients. See <<pat_rewrite,PAT Rewrite>> and <<sdt_rewrite,SDT Rewrite>> sections.
+- Possibility to partially rewrite the stream for better compatibility with set-top boxes and some clients. See <<pat_rewrite,PAT Rewrite>>, <<sdt_rewrite,SDT Rewrite>> and <<pmt_rewrite,PMT rewrite>> sections.
 - Support for HTTP unicast see <<unicast,http unicast>> section
 - Support for RTP headers (only for multicast)
 - CAM menu access while streaming (using a web/AJAX interface - see WEBSERVICES.txt and CAM_menu_interface.png for screenshot)
@@ -171,10 +171,10 @@ Possible options are:
 
 ------------------------------------------------------------------
 -d, --debug
-	Don't deamonize and print messages on the standard output.
+	Don't daemonize and print messages on the standard output.
 
 -s, --signal
-	Print signal strenght every 5 seconds
+	Print signal strength every 5 seconds
 
 -t, --traffic
 	Print the traffic of the channels every 10 seconds
@@ -203,7 +203,7 @@ Possible options are:
 
 Signal: (see kill(1))
 ------------------------------------------------------------------
-    SIGUSR1: switch the signal strenght printing
+    SIGUSR1: switch the signal strength printing
     SIGUSR2: switch the traffic printing
     SIGHUP: flush the log files
 ------------------------------------------------------------------
@@ -250,7 +250,7 @@ srate=27500
 autoconfiguration=full
 ----------------------
 
-The channels will be streamed over the multicasts ip adresses 239.100.c.n where c is the card number (0 by default) and n is the channel number.
+The channels will be streamed over the multicasts ip addresses 239.100.c.n where c is the card number (0 by default) and n is the channel number.
 
 If you don't use the common_port directive, MuMuDVB will use the port 1234.
 
@@ -264,7 +264,7 @@ By default, PAT rewriting is activated if you use autoconfiguration. To disable 
 If you want to select the services to stream, you can use the `autoconf_sid_list` option which allows to specify the service identifier of the channels you want to be configured.
 
 [NOTE]
-A detailled, documented example configuration file can be found in `doc/configuration_examples/autoconf_full.conf`
+A detailed, documented example configuration file can be found in `doc/configuration_examples/autoconf_full.conf`
 
 Templates and autoconfiguration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -376,7 +376,7 @@ ip=239.42.42.2
 SAP announces
 -------------
 
-SAP (Session Announcement Protocol) announces are made for the client to know which channels are streamed and what is their name and adress. It avoids to give to the client the list of the multicast ip adresses.
+SAP (Session Announcement Protocol) announces are made for the client to know which channels are streamed and what is their name and address. It avoids to give to the client the list of the multicast ip addresses.
 
 VLC and most of set-top boxes are known to support them.
 
@@ -438,7 +438,7 @@ There is one listening connection, the channel is selected via the HTTP path, se
 And you can have listening sockets per channel, in this case the client will always get the same channel independantly of the path.
 
 [NOTE]
-Be careful with unicast, it can eat a lot of bandwith. Think about limitting the number of clients.
+Be careful with unicast, it can eat a lot of bandwidth. Think about limitting the number of clients.
 
 [NOTE]
 If you don't want the (always here) multicast traffic to go on your network set `multicast=0`
@@ -530,17 +530,25 @@ will give you the channel with the service id 100, or a 404 error if there is no
 Get the channel by name
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-[NOTE]
-This is not implemented for the moment, it will be implemented in a future release
+You can ask the channel by the channel name.
+The search is case insensitive. If your channel name contains spaces, replace them by '-' character.
+
+If you server is listening on the ip 10.0.0.1 and the port 4242,
+
+----------------------------------------------------
+vlc http://10.0.0.1:4242/byname/your-tv-station-name
+----------------------------------------------------
+
+will give you the channel with name "Your TV station name". This works also with xine and mplayer.
 
 Get the channels list
 ^^^^^^^^^^^^^^^^^^^^^
 
 If you server is listening on the ip 10.0.1 and the port 4242,
 
-To get the channel list (in basic html) just enter the adress `http://10.0.0.1:4242/channels_list.html` in your web browser.
+To get the channel list (in basic html) just enter the address `http://10.0.0.1:4242/channels_list.html` in your web browser.
 
-To get the channel list (in JSON) just enter the adress `http://10.0.0.1:4242/channels_list.json` in your web browser.
+To get the channel list (in JSON) just enter the address `http://10.0.0.1:4242/channels_list.json` in your web browser.
 
 HTTP unicast and monitoring
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -603,7 +611,7 @@ ID_CA_Supported=0500
 ----------------------------------------------------
 
 [NOTE]
-In case of issues with some king of CAMs the libdvben50221 could have to be patched:
+In case of issues with some kinds of CAMs the libdvben50221 could have to be patched:
 http://article.gmane.org/gmane.linux.drivers.video-input-infrastructure/29866[Link to the patch]
 
 How to ask MuMuDVB for descrambling?
@@ -615,7 +623,7 @@ Just add `cam_support=1` to your config file
 
 .You are not using autoconfiguration
  * Add `cam_support=1` to your config file (before the channels)
- * For each scrambled channel add the `pmt_pid` option. This option is made for MuMuDVB to know wich PID is the PMT PID wich will be used to ask for descrambling
+ * For each scrambled channel add the `pmt_pid` option. This option is made for MuMuDVB to know which PID is the PMT PID which will be used to ask for descrambling
 
 
 
@@ -818,6 +826,19 @@ To enable SDT rewriting, add `rewrite_sdt=1` to your config file. This feature c
 [NOTE]
 If you don't use full autoconfiguration, SDT rewrite needs the `service_id` option for each channel to specify the service id.
 
+[[pmt_rewrite]]
+PMT (Program Map Table) Rewriting
+-----------------------------------------
+
+This option must be used if you don't stream all PIDs for a channel. It's useful for separating one channel with multiple audio streams (multiple languages) into separate channels.
+
+Without PMT rewrite, players can get confused due to missing streams, especially if the first PID in the table is not streamed, and the playback may fail. However, teletext PID can usually be dropped safely without rewriting PMT, as it's the last PID in the table.
+
+To enable PMT rewriting, add `rewrite_pmt=1` to your config file.
+
+[NOTE]
+PMT rewrite will work only if PIDs are set manually. If they are autodetected, everything will be streamed so there's no need to rewrite the PMT.
+
 
 
 EIT PID (Event Information Table) Sorting
@@ -872,8 +893,59 @@ To "enjoy" multicasting you need a switch which supports the http://en.wikipedia
 
 IPv6 use extensively the concept of http://en.wikipedia.org/wiki/Multicast_address[scoping]. By default MuMuDVB uses the scope "site-local" (ie multicast addresses starting with FF05) the SAP announcements are also sent with this scope. If you need to have more flexibility on this side, please contact.
 
-For more details, please consult the http://mumudvb.net/node/52[IPv6 page] on MuMuDVB's website
+Here some documentation about IPv6 and multicasting
 
+http://www.cisco.com/en/US/technologies/tk648/tk872/technologies_white_paper0900aecd80260049.pdf[IPv6 Multicast at a Glance - Cisco]
+
+http://www.cisco.com/en/US/technologies/tk648/tk872/technologies_white_paper0900aecd8026003d.pdf[IPv6 Addressing at a Glance - Cisco]
+
+
+RFCs concerning IPv6 scopes and addressing
+
+http://tools.ietf.org/html/rfc4007[RFC4007]
+http://tools.ietf.org/html/rfc4291[RFC4291]
+
+What is MLD snooping (equivalent of IGMP in IPv6) and how to configure it on HP switches
+http://cdn.procurve.com/training/Manuals/2900-3500-5400-6200-8200-IPv6-Jan08-7-MLD.pdf[MLD snooping on Procurve]
+
+Support of IPv6 on Cisco switches
+http://www.cisco.com/en/US/technologies/collateral/tk648/tk872/tk373/technologies_white_paper_09186a00802219bc_ps6553_Products_White_Paper.html[IPV6 on cisco]
+
+Extract of the previous page
+----------------------------------------------------------------------------------
+Layer 2 Switches
+IPv6 traffic forwarding does not impact Layer 2 LAN switches, since these devices do not need to look at the Layer 3 header to forward an IPv6 frame; thus IPv6 hosts can be transparently attached to the following Cisco products. In addition, Layer 2 switches may integrate dedicated IPv6 features such as native IPv6 network management or MLD snooping (Cisco products marked with "*" in the list).
+• Cisco Catalyst Express 500 Series Switch
+• Cisco Catalyst 2900XL Series Switch
+• Cisco Catalyst 2960 Series (*)
+• Cisco Catalyst 3500XL Series Switch
+• Cisco Catalyst 3560, 3560-E, 3750 and 3750-E Series Switch (*)
+• Cisco Catalyst 4500 Series Switch
+• Cisco Catalyst 4500-E Series Switch (*)
+• Cisco Catalyst 5000 Series Switch
+• Cisco Catalyst 6500 Series Switch (*)
+----------------------------------------------------------------------------------
+
+Also
+Cisco introduced IPv6 Multicast in Cisco IOS Software Releases 12.0(26)S, 12 .2(18)S, and12.3(2)T. It has been deployed in numerous business-critical IPv6 Multicast networks.
+
+http://www.cisco.com/cisco/web/solutions/small_business/products/routers_switches/300_series_switches/index.html[IPV6 small business switch]
+
+Some useful commands for ipv6 multicast debugging under linux
+------------------------------------------
+Show the open sockets
+netstat -6tulp
+
+See the traffic (on iface eth0)
+tcpdump -ni eth0 ip6
+
+See the traffic to a particular address (here the SAP IPv6 announces)
+tcpdump -ni eth0 ip6 host FF05::2:7FFE
+
+Read an IPv6 stream with VLC (under linux)
+vlc -vvv --ipv6 udp://@\[ff15::1\]:1234
+
+------------------------------------------
 
 
 MuMuDVB Logs

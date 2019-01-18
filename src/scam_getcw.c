@@ -4,7 +4,7 @@
  * 
  * (C) 2004-2010 Brice DUBOST
  *
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  *
  * Code inspired by vdr plugin dvbapi
  * Copyright (C) 2011,2012 Mariusz Białończyk <manio@skyboo.net>
@@ -47,6 +47,11 @@
 
 #include <dvbcsa/dvbcsa.h>
 
+
+#define DVBAPI_OPCODE_LEN        5
+#define DVBAPI_CA_SET_DESCR_LEN  21
+#define DVBAPI_CA_SET_PID_LEN    13
+
 /**@file
  * @brief scam support
  * 
@@ -81,8 +86,12 @@ void scam_getcw_stop(scam_parameters_t *scam_params)
 
   // shutdown the getcw thread
   scam_params->getcwthread_shutdown = 1;
-  pthread_cancel(scam_params->getcwthread);
-  log_message( log_module,  MSG_DEBUG,  "Getcw thread stopped\n");
+  if (scam_params->getcwthread) {
+    pthread_cancel(scam_params->getcwthread);
+    log_message( log_module,  MSG_DEBUG,  "Getcw thread stopped\n");
+  } else {
+    log_message( log_module,  MSG_DEBUG,  "Getcw thread not found\n");
+  }
 }
 
 /** @brief The thread function for getting cw's from oscam */
@@ -112,7 +121,18 @@ static void *getcwthread_func(void* arg)
     for (i = 0; i < num_of_events; i++) {
       for (curr_channel = 0; curr_channel < chan_p->number_of_channels; curr_channel++) {
         mumudvb_channel_t *channel = &chan_p->channels[curr_channel];
-        if (events[i].data.fd == channel->camd_socket) {
+
+	/* find biss key for current channel */
+	int chanid = 0;
+	if (scam_params->const_key_count > 0) {
+	    for (; chanid < scam_params->const_key_count; chanid++) {
+    		if (channel->service_id == scam_params->const_sid[chanid]) {
+        	    log_message(log_module, MSG_DEBUG,"found static key %d in list for channel %s", chanid, channel->name);
+        	    break;
+    		}
+	    }
+	 }
+        else if (events[i].data.fd == channel->camd_socket && !(channel->service_id == scam_params->const_sid[chanid] && scam_params->const_key_count > 0)) {
           if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
             log_message(log_module, MSG_INFO,"channel %s socket not alive, will try to reconnect\n", channel->name);
             int s = epoll_ctl(scam_params->epfd, EPOLL_CTL_DEL, channel->camd_socket, &events[i]);
@@ -132,7 +152,7 @@ static void *getcwthread_func(void* arg)
             channel->ca_idx = 0;
             pthread_mutex_unlock(&channel->cw_lock);
           } else {
-            cRead = recv(channel->camd_socket, &buff, sizeof(buff), 0);
+            cRead = recv(channel->camd_socket, &buff, DVBAPI_OPCODE_LEN, 0);
             if (cRead <= 0) {
               log_message(log_module, MSG_ERROR,"channel: %s recv", channel->name);
               set_interrupted(ERROR_NETWORK<<8);
@@ -141,6 +161,20 @@ static void *getcwthread_func(void* arg)
               return 0;
             }
             request = (int *) (buff + 1);
+            if (*request == CA_SET_DESCR)
+            {
+                //read upt to DVBAPI_CA_SET_DESCR_LEN
+                cRead = recv(channel->camd_socket, (buff + DVBAPI_OPCODE_LEN), (DVBAPI_CA_SET_DESCR_LEN - DVBAPI_OPCODE_LEN), 0);
+                if (cRead != (DVBAPI_CA_SET_DESCR_LEN - DVBAPI_OPCODE_LEN))
+                    *request = 0;
+            }
+            else if (*request == CA_SET_PID)
+            {
+                //read upt to DVBAPI_CA_SET_PID_LEN
+                cRead = recv(channel->camd_socket, (buff + DVBAPI_OPCODE_LEN), (DVBAPI_CA_SET_PID_LEN - DVBAPI_OPCODE_LEN), 0);
+                if (cRead != (DVBAPI_CA_SET_PID_LEN - DVBAPI_OPCODE_LEN))
+                    *request = 0;
+            }
             if (*request == CA_SET_DESCR) {
               memcpy((&(scam_params->ca_descr)), buff + 1 + sizeof(int), sizeof(ca_descr_t));
               log_message( log_module,  MSG_DEBUG, "Got CA_SET_DESCR request for channel: %s, index: %d, parity %d, key %02x %02x %02x %02x %02x %02x %02x %02x\n", channel->name, scam_params->ca_descr.index, scam_params->ca_descr.parity, scam_params->ca_descr.cw[0], scam_params->ca_descr.cw[1], scam_params->ca_descr.cw[2], scam_params->ca_descr.cw[3], scam_params->ca_descr.cw[4], scam_params->ca_descr.cw[5], scam_params->ca_descr.cw[6], scam_params->ca_descr.cw[7]);
@@ -165,10 +199,10 @@ static void *getcwthread_func(void* arg)
               log_message( log_module,  MSG_DEBUG, "Got CA_SET_PID request channel: %s, index: %d pid: %d\n", channel->name, scam_params->ca_pid.index, scam_params->ca_pid.pid);
               if(scam_params->ca_pid.index == -1) {
                 pthread_mutex_lock(&channel->cw_lock);
-                --channel->ca_idx_refcnt;
+                if (channel->ca_idx_refcnt) --channel->ca_idx_refcnt;
                 if (!channel->ca_idx_refcnt) {
                   channel->ca_idx = 0;
-                  log_message( log_module,  MSG_INFO, "Got CA_SET_PID removal request: %d setting channel %s with ca_idx to 0 %d\n", scam_params->ca_pid.pid, channel->name, scam_params->ca_pid.index+1);
+                  log_message( log_module,  MSG_INFO, "Got CA_SET_PID removal request: %d setting channel %s with ca_idx %d to 0\n", scam_params->ca_pid.pid, channel->name, scam_params->ca_pid.index+1);
                 }
                 pthread_mutex_unlock(&channel->cw_lock);
               } else {

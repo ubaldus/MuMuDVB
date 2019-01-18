@@ -3,7 +3,7 @@
  *
  * (C) 2009-2013 Brice DUBOST
  *
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  *
  * Copyright notice:
  *
@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <strings.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -47,6 +48,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "unicast_http.h"
 #include "unicast_queue.h"
@@ -81,9 +83,9 @@ unicast_send_streamed_channels_list (int number_of_channels, mumudvb_channel_t *
 int
 unicast_send_index_page  (int Socket);
 int
-unicast_send_play_list_unicast (int number_of_channels, mumudvb_channel_t *channels, int Socket, int unicast_portOut, int perport);
+unicast_send_play_list_unicast (int number_of_channels, mumudvb_channel_t *channels, int Socket, int unicast_portOut, int perport, unicast_parameters_t *unicast_vars);
 int
-unicast_send_play_list_multicast (int number_of_channels, mumudvb_channel_t* channels, int Socket, int vlc);
+unicast_send_play_list_multicast (int number_of_channels, mumudvb_channel_t* channels, int Socket, int vlc, unicast_parameters_t *unicast_vars);
 int
 unicast_send_streamed_channels_list_js (int number_of_channels, mumudvb_channel_t *channels, void* cam_p_v, int Socket);
 int
@@ -132,6 +134,8 @@ void init_unicast_v(unicast_parameters_t *unicast_vars)
 				.socket_sendbuf_size=0,
 				.flush_on_eagain=0,
 				.pfdsnum=0,
+				.playlist_ignore_dead=0,
+				.playlist_ignore_scrambled_ratio=0,
 	 };
 	 unicast_vars->pfds=NULL;
 	 //+1 for closing the pfd list, see man poll
@@ -204,7 +208,18 @@ int read_unicast_configuration(unicast_parameters_t *unicast_vars, mumudvb_chann
 	}
 	else if (!strcmp (substring, "port_http"))
 	{
-		substring = strtok (NULL, "");
+		substring = strtok (NULL, "=");
+
+		// next we replace all the spaces as too many spaces are messing with the further parsing
+		// like: "     port_http            = 2000 + %card"
+		int len = strlen(substring)+1;
+		substring = mumu_string_replace(substring, &len, 1, " ", "");
+
+		// if the string is empty after the replacement, we need to tokenize one more time to get the actual setting
+		if (strlen(substring) == 0) {
+			substring = strtok(NULL, "=");
+		}
+
 		if((strchr(substring,'*')!=NULL)||(strchr(substring,'+')!=NULL)||(strchr(substring,'%')!=NULL))
 		{
 			unicast_vars->portOut_str=malloc(sizeof(char)*(strlen(substring)+1));
@@ -237,6 +252,22 @@ int read_unicast_configuration(unicast_parameters_t *unicast_vars, mumudvb_chann
 		if(unicast_vars->flush_on_eagain)
 			log_message( log_module,  MSG_INFO, "The unicast data WILL be dropped on eagain errors\n");
 	}
+	else if (!strcmp (substring, "playlist_ignore_dead"))
+	{
+		substring = strtok (NULL, delimiteurs);
+		unicast_vars->playlist_ignore_dead = atoi (substring);
+	}
+	else if (!strcmp (substring, "playlist_ignore_scrambled_ratio"))
+	{
+		substring = strtok (NULL, delimiteurs);
+		unicast_vars->playlist_ignore_scrambled_ratio = atoi (substring);
+		if (unicast_vars->playlist_ignore_scrambled_ratio > 100) {
+                        log_message( log_module,  MSG_WARN,"Scrambled ignore ratio \"%d\" is over 100 percent, forcing to 100!\n", unicast_vars->playlist_ignore_scrambled_ratio);
+                        unicast_vars->playlist_ignore_scrambled_ratio = 100;
+                }
+
+	}
+
 	else
 		return 0; //Nothing concerning tuning, we return 0 to explore the other possibilities
 
@@ -697,16 +728,44 @@ int unicast_handle_message(unicast_parameters_t *unicast_vars,
 					return -2; //to delete the client
 				}
 				pos+=strlen("/byname/");
-				log_message( log_module, MSG_DEBUG,"Channel by number\n");
-				substring = strtok (client->buffer+pos, " ");
-				if(substring == NULL)
+                log_message( log_module, MSG_DEBUG,"Channel by name\n");
+
+                char *substring = client->buffer+pos;
+                char *end = strstr(substring, " HTTP"); // find end of channel name (this way channel name can contain spaces)
+                
+                if(*substring == 0) {
 					err404=1;
+                }
+                else if(end == NULL) {
+                    err404=1;
+                    log_message( log_module, MSG_DEBUG,"Channel name was not found in the URL `%s`\n", substring);
+                }
 				else
 				{
-					log_message( log_module, MSG_DEBUG,"Channel by name, name %s\n",substring);
-					//search the channel
-					err404=1;//Temporary
-					/** @todo implement the search without the spaces*/
+                    end[0] = '\0'; // add string terminator to be able to get channel name
+
+                    char requested_channel_name[MAX_NAME_LEN];
+                    char current_channel_name[MAX_NAME_LEN];
+                    strncpy(requested_channel_name, substring,MAX_NAME_LEN);
+                    requested_channel_name[MAX_NAME_LEN-1] = '\0';
+                    process_channel_name(requested_channel_name);
+                    
+                    for(int current_channel=0; current_channel<number_of_channels;current_channel++)
+                    {
+                        strcpy(current_channel_name, channels[current_channel].name);
+                        process_channel_name(current_channel_name);
+
+                        if(strcasecmp(current_channel_name, requested_channel_name) == 0)
+                            requested_channel=current_channel+1;
+                    }
+                    if(requested_channel)
+                        log_message( log_module, MSG_DEBUG,"Channel by name, name `%s` number `%d`\n", requested_channel_name, requested_channel);
+                    else
+                    {
+                        log_message( log_module, MSG_INFO,"Channel by name, name `%s` not found in channel list\n", requested_channel_name);
+                        err404=1;
+                        requested_channel=0;
+                    }
 				}
 			}
 			//Channels list
@@ -729,26 +788,26 @@ int unicast_handle_message(unicast_parameters_t *unicast_vars,
 			else if(strstr(client->buffer +pos ,"/playlist.m3u ")==(client->buffer +pos))
 			{
 				log_message( log_module, MSG_DETAIL,"play list\n");
-				unicast_send_play_list_unicast (number_of_channels, channels, client->Socket, unicast_vars->portOut, 0 );
+				unicast_send_play_list_unicast (number_of_channels, channels, client->Socket, unicast_vars->portOut, 0, unicast_vars );
 				return -2; //We close the connection afterwards
 			}
 			//playlist, m3u
 			else if(strstr(client->buffer +pos ,"/playlist_port.m3u ")==(client->buffer +pos))
 			{
 				log_message( log_module, MSG_DETAIL,"play list\n");
-				unicast_send_play_list_unicast (number_of_channels, channels, client->Socket, unicast_vars->portOut, 1 );
+				unicast_send_play_list_unicast (number_of_channels, channels, client->Socket, unicast_vars->portOut, 1, unicast_vars );
 				return -2; //We close the connection afterwards
 			}
 			else if(strstr(client->buffer +pos ,"/playlist_multicast.m3u ")==(client->buffer +pos))
 			{
 				log_message( log_module, MSG_DETAIL,"play list\n");
-				unicast_send_play_list_multicast (number_of_channels, channels, client->Socket, 0);
+				unicast_send_play_list_multicast (number_of_channels, channels, client->Socket, 0, unicast_vars );
 				return -2; //We close the connection afterwards
 			}
 			else if(strstr(client->buffer +pos ,"/playlist_multicast_vlc.m3u ")==(client->buffer +pos))
 			{
 				log_message( log_module, MSG_DETAIL,"play list\n");
-				unicast_send_play_list_multicast (number_of_channels, channels, client->Socket, 1);
+				unicast_send_play_list_multicast (number_of_channels, channels, client->Socket, 1, unicast_vars );
 				return -2; //We close the connection afterwards
 			}
 			//statistics, text version
@@ -1002,6 +1061,7 @@ int unicast_reply_send(struct unicast_reply *reply, int socket, int code, const 
 		log_message( log_module, MSG_ERROR,"reply send with bad code please contact\n");
 		return 0;
 	}
+	unicast_reply_write(reply, "Access-Control-Allow-Origin: *\r\n");
 	unicast_reply_write(reply, "Server: mumudvb/" VERSION "\r\n");
 	unicast_reply_write(reply, "Content-type: %s; charset=utf-8\r\n", content_type);
 	unicast_reply_write(reply, "Content-length: %d\r\n", reply->used_body);
@@ -1014,8 +1074,13 @@ int unicast_reply_send(struct unicast_reply *reply, int socket, int code, const 
 	//now we write the data
 	while (size<reply->used_header){
 		temp_size = write(socket, reply->buffer_header+size, reply->used_header-size);
-		size += temp_size!=-1 ? temp_size : 0 ;
-
+		if (temp_size != -1) {
+			size += temp_size;
+		} else {
+			if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
+				return -1;
+			}
+		}
 	}
 	return size;
 }
@@ -1083,7 +1148,7 @@ unicast_send_streamed_channels_list (int number_of_channels, mumudvb_channel_t *
  * @param perport says if the channel have to be given by the url /bysid or by their port
  */
 int
-unicast_send_play_list_unicast (int number_of_channels, mumudvb_channel_t *channels, int Socket, int unicast_portOut, int perport)
+unicast_send_play_list_unicast (int number_of_channels, mumudvb_channel_t *channels, int Socket, int unicast_portOut, int perport, unicast_parameters_t *unicast_vars)
 {
 	int curr_channel,iRet;
 
@@ -1110,7 +1175,10 @@ unicast_send_play_list_unicast (int number_of_channels, mumudvb_channel_t *chann
 
 	//"#EXTINF:0,title\r\nURL"
 	for (curr_channel = 0; curr_channel < number_of_channels; curr_channel++)
-		if (channels[curr_channel].channel_ready>=READY)
+		if (channels[curr_channel].channel_ready>=READY
+		    && (channels[curr_channel].has_traffic == 1 || unicast_vars->playlist_ignore_dead == 0)
+		    && (channels[curr_channel].ratio_scrambled < unicast_vars->playlist_ignore_scrambled_ratio || unicast_vars->playlist_ignore_scrambled_ratio == 0)
+		)
 		{
 			if(!perport)
 			{
@@ -1202,7 +1270,7 @@ unicast_send_index_page (int Socket)
  * @param Socket the socket on wich the information have to be sent
  */
 int
-unicast_send_play_list_multicast (int number_of_channels, mumudvb_channel_t *channels, int Socket, int vlc)
+unicast_send_play_list_multicast (int number_of_channels, mumudvb_channel_t *channels, int Socket, int vlc, unicast_parameters_t *unicast_vars)
 {
 	int curr_channel;
 	char urlheader[4];
@@ -1225,7 +1293,7 @@ unicast_send_play_list_multicast (int number_of_channels, mumudvb_channel_t *cha
 
 	//"#EXTINF:0,title\r\nURL"
 	for (curr_channel = 0; curr_channel < number_of_channels; curr_channel++)
-		if (channels[curr_channel].channel_ready>=READY)
+		if (channels[curr_channel].channel_ready>=READY && (channels[curr_channel].has_traffic == 1 || unicast_vars->playlist_ignore_dead == 0))
 		{
 			if(channels[curr_channel].rtp)
 				strcpy(urlheader,"rtp");
@@ -1250,12 +1318,28 @@ unicast_send_play_list_multicast (int number_of_channels, mumudvb_channel_t *cha
 	return 0;
 }
 
+/** @brief Trims name of a channel to remove leading and trailing spaces, and replaces all spaces by '-' character.
+ * Note that the string will be modified so do a copy prior to running this function if modifications to the original shall be prevented.
+ *
+ * @param str Channel name to process
+ */
+void process_channel_name(char *str) {
+    int i;
+    int begin = 0;
+    int end = strlen(str) - 1;
 
-
-
-
-
-
-
-
-
+    while (isspace(str[begin]))
+        begin++;
+    while ((end >= begin) && isspace(str[end]))
+        end--;
+    
+    // shift all characters back to the start of the string array
+    for (i = begin; i <= end; i++) {
+        if (isspace(str[i]))
+            str[i - begin] = '-'; // replace spaces by '-'
+        else
+            str[i - begin] = str[i];
+    }
+    
+    str[i - begin] = '\0';
+}

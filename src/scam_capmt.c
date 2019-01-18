@@ -4,7 +4,7 @@
  * 
  * (C) 2004-2010 Brice DUBOST
  *
- * The latest version can be found at http://mumudvb.braice.net
+ * The latest version can be found at http://mumudvb.net
  *
  * Code inspired by vdr plugin dvbapi
  * Copyright (C) 2011,2012 Mariusz Białończyk <manio@skyboo.net>
@@ -59,6 +59,29 @@ static char *log_module="SCAM_CAPMT: ";
 /** @brief sending to oscam data to begin geting cw's for channel */
 int scam_send_capmt(mumudvb_channel_t *channel, scam_parameters_t *scam_params, int adapter)
 {
+ /* find biss key for current channel */
+ int chanid = 0;
+ if (scam_params->const_key_count > 0) {
+    for (; chanid < scam_params->const_key_count; chanid++) {
+	if (channel->service_id == scam_params->const_sid[chanid]) {
+	    log_message(log_module, MSG_DEBUG,"found static key %d in list for channel %s", chanid, channel->name);
+	    break;
+	}
+    }
+ }
+ if (channel->service_id == scam_params->const_sid[chanid] && scam_params->const_key_count > 0)
+ {
+    pthread_mutex_lock(&channel->cw_lock);
+    memcpy(channel->odd_cw,&scam_params->const_key_odd[chanid],8);
+    channel->got_key_odd=1;
+    memcpy(channel->even_cw,&scam_params->const_key_even[chanid],8);
+    channel->got_key_even=1;
+
+    channel->ca_idx = scam_params->ca_pid.index+1;
+    if (channel->ca_idx_refcnt == 0) channel->ca_idx_refcnt = 1;
+
+    pthread_mutex_unlock(&channel->cw_lock);
+ } else {
   if (channel->camd_socket < 0)
   {
 	channel->camd_socket = socket(AF_LOCAL, SOCK_STREAM, 0);
@@ -73,6 +96,36 @@ int scam_send_capmt(mumudvb_channel_t *channel, scam_parameters_t *scam_params, 
 	  channel->camd_socket = -1;
 	  return 1;
 	} else log_message(log_module,  MSG_DEBUG, "created socket for channel %s\n", channel->name);
+	
+	//moved this into this block since PMTs will now be sent more than once and this would cause errors with EPOLL_CTL_ADD
+	int flags, s;
+	
+	flags = fcntl (channel->camd_socket, F_GETFL, 0);
+	if (flags == -1)
+	{
+	  log_message(log_module, MSG_ERROR,"channel %s: unsuccessful fcntl F_GETFL", channel->name);
+	  set_interrupted(ERROR_NETWORK<<8);
+	  return 1;
+	}
+	
+	flags |= O_NONBLOCK;
+	s = fcntl (channel->camd_socket, F_SETFL, flags);
+	if (s == -1)
+	{
+	  log_message(log_module, MSG_ERROR,"channel %s: unsuccessful fcntl F_SETFL", channel->name);
+	  set_interrupted(ERROR_NETWORK<<8);
+	  return 1;
+	}
+	struct epoll_event event = { 0 };
+	event.data.fd = channel->camd_socket;
+	event.events = EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP;
+	s = epoll_ctl(scam_params->epfd, EPOLL_CTL_ADD, channel->camd_socket, &event);
+	if (s == -1)
+	{
+	  log_message(log_module, MSG_ERROR,"channel %s: unsuccessful epoll_ctl EPOLL_CTL_ADD", channel->name);
+	  set_interrupted(ERROR_NETWORK<<8);
+	  return 1;
+	}
   }
 
   char *caPMT = (char *) calloc(1024, 1);
@@ -116,36 +169,7 @@ int scam_send_capmt(mumudvb_channel_t *channel, scam_parameters_t *scam_params, 
     channel->camd_socket = -1;
     return 1;
   }
-
-  int flags, s;
-
-  flags = fcntl (channel->camd_socket, F_GETFL, 0);
-  if (flags == -1)
-  {
-    log_message(log_module, MSG_ERROR,"channel %s: unsuccessful fcntl F_GETFL", channel->name);
-    set_interrupted(ERROR_NETWORK<<8);
-    return 1;
-  }
-
-  flags |= O_NONBLOCK;
-  s = fcntl (channel->camd_socket, F_SETFL, flags);
-  if (s == -1)
-  {
-    log_message(log_module, MSG_ERROR,"channel %s: unsuccessful fcntl F_SETFL", channel->name);
-    set_interrupted(ERROR_NETWORK<<8);
-    return 1;
-  }
-  struct epoll_event event = { 0 };
-  event.data.fd = channel->camd_socket;
-  event.events = EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP;
-  s = epoll_ctl(scam_params->epfd, EPOLL_CTL_ADD, channel->camd_socket, &event);
-  if (s == -1)
-  {
-    log_message(log_module, MSG_ERROR,"channel %s: unsuccessful epoll_ctl EPOLL_CTL_ADD", channel->name);
-    set_interrupted(ERROR_NETWORK<<8);
-    return 1;
-  }
-
+ }
   return 0;
 }
 

@@ -1,3 +1,11 @@
+-- MuMuDVB 2.0 --
+New features / improvements :
+ * Autoconfiguration: complete rewrite, more flexible, can follow channel changes, partial autoconf dropped.
+ * EPG: Electronic Programs guide (EIT table) available from the webservices
+ * Video: support for HEVC
+ * Scam: various improvements and fixes
+ * Tuning: Diseqc improvments
+
 -- MuMuDVB 1.7 --
 New features / improvements :
  * Implements dual stack for IPv6 Mulicast
@@ -77,7 +85,7 @@ Bugs corrected :
 
 New features : 
  * Option multicast_ttl to override default ttl
- * Option autoconf_ip_header, to change the first part of ip adresses used by autoconfiguration
+ * Option autoconf_ip_header, to change the first part of ip addresses used by autoconfiguration
  * Option sap_default_group
  * Init scripts, cf scripts/ directory
  * Smaller memory footprint
